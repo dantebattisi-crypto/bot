@@ -11,6 +11,7 @@ from telegram.ext import Application, MessageHandler, CommandHandler, filters, C
 from config import (
     BOT_TOKEN, SOURCE_CHANNEL_ID, SOURCE_PATTERNS,
     CHANNEL_LINK, CHANNEL_BUTTON_TEXT, OFFLINE_MESSAGE, UK_TZ,
+    REFERRAL_MESSAGE, REFERRAL_DAY, REFERRAL_HOUR,
 )
 
 logging.basicConfig(
@@ -158,6 +159,16 @@ async def on_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logging.info(f"Added to chat {update.message.chat.id} ({update.message.chat.title})")
 
 
+async def send_referral_reminder(context: ContextTypes.DEFAULT_TYPE):
+    chats = load_chats()
+    for chat_id in chats:
+        try:
+            await context.bot.send_message(chat_id, REFERRAL_MESSAGE)
+            logging.info(f"Sent referral reminder to chat {chat_id}")
+        except Exception as e:
+            logging.error(f"Failed to send referral reminder to {chat_id}: {e}")
+
+
 async def on_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chats = load_chats()
     chats.add(update.effective_chat.id)
@@ -173,6 +184,13 @@ def main():
     app.add_handler(MessageHandler(filters.ChatType.CHANNEL, on_channel_post))
     # Catch all incoming messages for offline auto-reply
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, on_message))
+
+    # Weekly referral reminder — runs every Monday (REFERRAL_DAY=0) at REFERRAL_HOUR:00 UK time
+    app.job_queue.run_daily(
+        send_referral_reminder,
+        time=datetime.now(ZoneInfo(UK_TZ)).replace(hour=REFERRAL_HOUR, minute=0, second=0).timetz(),
+        days=(REFERRAL_DAY,),
+    )
 
     logging.info("Bot started.")
     app.run_polling()
