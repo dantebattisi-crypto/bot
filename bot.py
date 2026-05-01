@@ -111,17 +111,23 @@ async def on_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = strip_source(post.text or post.caption)
     keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(CHANNEL_BUTTON_TEXT, url=CHANNEL_LINK)]])
 
+    has_media = bool(post.photo or post.video or post.animation or post.document)
+    long_caption = bool(text) and len(text) > 1024
+    media_caption = None if long_caption else text
+    media_keyboard = None if long_caption else keyboard
+
     for chat_id in chats:
         try:
             if post.photo:
-                await context.bot.send_photo(chat_id, post.photo[-1].file_id, caption=text, reply_markup=keyboard)
+                await context.bot.send_photo(chat_id, post.photo[-1].file_id, caption=media_caption, reply_markup=media_keyboard)
             elif post.video:
-                await context.bot.send_video(chat_id, post.video.file_id, caption=text, reply_markup=keyboard)
+                await context.bot.send_video(chat_id, post.video.file_id, caption=media_caption, reply_markup=media_keyboard)
             elif post.animation:
-                await context.bot.send_animation(chat_id, post.animation.file_id, caption=text, reply_markup=keyboard)
+                await context.bot.send_animation(chat_id, post.animation.file_id, caption=media_caption, reply_markup=media_keyboard)
             elif post.document:
-                await context.bot.send_document(chat_id, post.document.file_id, caption=text, reply_markup=keyboard)
-            elif text:
+                await context.bot.send_document(chat_id, post.document.file_id, caption=media_caption, reply_markup=media_keyboard)
+
+            if text and (long_caption or not has_media):
                 await context.bot.send_message(chat_id, text, reply_markup=keyboard)
         except Exception as e:
             logging.error(f"Failed to send to chat {chat_id}: {e}")
