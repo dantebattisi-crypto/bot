@@ -1,9 +1,10 @@
 import logging
-import json
 import re
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
 from zoneinfo import ZoneInfo
+
+import redis
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, MessageHandler, CommandHandler, filters, ContextTypes
@@ -11,7 +12,7 @@ from telegram.ext import Application, MessageHandler, CommandHandler, filters, C
 from config import (
     BOT_TOKEN, SOURCE_CHANNEL_ID, SOURCE_PATTERNS,
     CHANNEL_LINK, CHANNEL_BUTTON_TEXT, OFFLINE_MESSAGE, UK_TZ,
-    REFERRAL_MESSAGE, REFERRAL_DAY, REFERRAL_HOUR,
+    REFERRAL_MESSAGE, REFERRAL_HOUR, REFERRAL_INTERVAL_DAYS,
 )
 
 logging.basicConfig(
@@ -19,63 +20,46 @@ logging.basicConfig(
     level=logging.INFO,
 )
 
-CHATS_FILE = "chats.json"
-AUTOREPLY_FILE = "autoreply.json"
+_redis = redis.from_url(os.environ["REDIS_URL"], decode_responses=True)
+
+CHATS_KEY = "bot:chats"
+AUTOREPLY_PREFIX = "bot:autoreply:"
+REFERRAL_LAST_SENT_KEY = "bot:referral:last_sent"
 
 
 # ---------- chats storage ----------
 
 def load_chats() -> set:
-    if os.path.exists(CHATS_FILE):
-        with open(CHATS_FILE) as f:
-            return set(json.load(f))
-    return set()
+    members = _redis.smembers(CHATS_KEY)
+    return {int(m) for m in members}
 
 
 def save_chats(chats: set):
-    with open(CHATS_FILE, "w") as f:
-        json.dump(list(chats), f)
+    pipe = _redis.pipeline()
+    pipe.delete(CHATS_KEY)
+    if chats:
+        pipe.sadd(CHATS_KEY, *chats)
+    pipe.execute()
 
 
 # ---------- auto-reply tracking ----------
 
 def night_period_key() -> str:
-    """
-    Returns a string key for the current night period (18:00 → 10:00 UK).
-    Periods that started yesterday evening share yesterday's date as key.
-    """
     now = datetime.now(ZoneInfo(UK_TZ))
     if now.hour < 10:
         return str((now - timedelta(days=1)).date())
     return str(now.date())
 
 
-def load_autoreply() -> dict:
-    if os.path.exists(AUTOREPLY_FILE):
-        with open(AUTOREPLY_FILE) as f:
-            return json.load(f)
-    return {}
-
-
-def save_autoreply(data: dict):
-    with open(AUTOREPLY_FILE, "w") as f:
-        json.dump(data, f)
-
-
 def already_replied(chat_id: int) -> bool:
-    key = night_period_key()
-    data = load_autoreply()
-    return str(chat_id) in data.get(key, [])
+    key = AUTOREPLY_PREFIX + night_period_key()
+    return _redis.sismember(key, str(chat_id))
 
 
 def mark_replied(chat_id: int):
-    key = night_period_key()
-    data = load_autoreply()
-    # Keep only current period to avoid file growing forever
-    data = {key: data.get(key, [])}
-    if str(chat_id) not in data[key]:
-        data[key].append(str(chat_id))
-    save_autoreply(data)
+    key = AUTOREPLY_PREFIX + night_period_key()
+    _redis.sadd(key, str(chat_id))
+    _redis.expire(key, 60 * 60 * 48)
 
 
 def is_offline_hours() -> bool:
@@ -159,13 +143,17 @@ async def on_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     for member in update.message.new_chat_members:
         if member.id == context.bot.id:
-            chats = load_chats()
-            chats.add(update.message.chat.id)
-            save_chats(chats)
+            _redis.sadd(CHATS_KEY, update.message.chat.id)
             logging.info(f"Added to chat {update.message.chat.id} ({update.message.chat.title})")
 
 
 async def send_referral_reminder(context: ContextTypes.DEFAULT_TYPE):
+    last_sent_str = _redis.get(REFERRAL_LAST_SENT_KEY)
+    if last_sent_str:
+        days_since = (datetime.now(ZoneInfo(UK_TZ)).date() - datetime.fromisoformat(last_sent_str).date()).days
+        if days_since < REFERRAL_INTERVAL_DAYS:
+            return
+
     chats = load_chats()
     for chat_id in chats:
         try:
@@ -174,11 +162,11 @@ async def send_referral_reminder(context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logging.error(f"Failed to send referral reminder to {chat_id}: {e}")
 
+    _redis.set(REFERRAL_LAST_SENT_KEY, str(datetime.now(ZoneInfo(UK_TZ)).date()))
+
 
 async def on_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chats = load_chats()
-    chats.add(update.effective_chat.id)
-    save_chats(chats)
+    _redis.sadd(CHATS_KEY, update.effective_chat.id)
     await update.message.reply_text("Bot activated in this chat.")
 
 
@@ -191,11 +179,10 @@ def main():
     # Catch all incoming messages for offline auto-reply
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, on_message))
 
-    # Weekly referral reminder — runs every Monday (REFERRAL_DAY=0) at REFERRAL_HOUR:00 UK time
+    # Referral reminder — fires daily at noon UK time, but sends only every 21 days (tracked in Redis)
     app.job_queue.run_daily(
         send_referral_reminder,
-        time=datetime.now(ZoneInfo(UK_TZ)).replace(hour=REFERRAL_HOUR, minute=0, second=0).timetz(),
-        days=(REFERRAL_DAY,),
+        time=time(hour=REFERRAL_HOUR, minute=0, second=0, tzinfo=ZoneInfo(UK_TZ)),
     )
 
     logging.info("Bot started.")

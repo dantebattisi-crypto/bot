@@ -12,23 +12,25 @@ OFFLINE_MESSAGE = (
     "Feel free to leave your question here and we'll get back to you as soon as possible!"
 )
 
-# Weekly referral reminder
-# REFERRAL_DAY: 0=Monday, 1=Tuesday, ..., 6=Sunday
-# REFERRAL_HOUR: hour in UK time (24h)
-REFERRAL_DAY = 0   # Monday
+# Referral reminder — runs every 3 weeks at REFERRAL_HOUR UK time
 REFERRAL_HOUR = 12  # noon
+REFERRAL_INTERVAL_DAYS = 21
 
 REFERRAL_MESSAGE = (
-    "💰 Referral Program\n\n"
-    "Every client gets a personal referral code. "
-    "Share it — your referral must provide it before their first purchase.\n\n"
-    "• €300 reward paid 7 days after their first purchase\n"
-    "• Can be applied to your own setup costs or paid out directly\n"
-    "• Ongoing commission on all future purchases:\n"
-    "  — 3–14 referrals: 1.5%\n"
-    "  — 15–19 referrals: 2.5%\n"
-    "  — 20+ referrals: 4%\n\n"
-    "Want your referral code? Just ask!"
+    "🚀 Referral Program — Updated\n\n"
+    "We've upgraded our referral program: higher commissions and a lower entry "
+    "— now every single referral counts from day one.\n\n"
+    "💶 How it works:\n\n"
+    "Your friend makes their first purchase using your referral code → you get €300 "
+    "(paid 7 days after purchase)\n\n"
+    "After that, you earn a commission on every future purchase they make:\n"
+    "— 1–5 referrals: 4%\n"
+    "— 6–15 referrals: 7%\n"
+    "— 16–25 referrals: 10%\n"
+    "— 25+ referrals: 12%\n\n"
+    "Reward can be applied to your own setup costs or paid out directly.\n"
+    "Your referral must provide your code before their first purchase.\n"
+    "Want your referral code? Just message us 👇"
 )
 
 SOURCE_PATTERNS = [
