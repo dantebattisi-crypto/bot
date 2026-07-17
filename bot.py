@@ -166,8 +166,9 @@ async def send_referral_reminder(context: ContextTypes.DEFAULT_TYPE):
 
 
 async def on_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    _redis.sadd(CHATS_KEY, update.effective_chat.id)
-    await update.message.reply_text("Bot activated in this chat.")
+    chat = update.effective_chat
+    _redis.sadd(CHATS_KEY, chat.id)
+    logging.info(f"Bot activated in chat {chat.id} ({chat.title or chat.username or 'private'})")
 
 
 def main():
