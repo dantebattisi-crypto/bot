@@ -7,10 +7,34 @@ CHANNEL_LINK = os.environ.get("CHANNEL_LINK", "https://t.me/yourchannel")
 CHANNEL_BUTTON_TEXT = os.environ.get("CHANNEL_BUTTON_TEXT", "Go to channel")
 
 UK_TZ = "Europe/London"
-OFFLINE_MESSAGE = (
-    "Hey! The whole team is most likely offline right now. "
-    "Feel free to leave your question here and we'll get back to you as soon as possible!"
-)
+
+# Telegram user IDs of the team — their messages never trigger the offline auto-reply.
+# Set TEAM_USER_IDS="123,456" in Railway env.
+TEAM_USER_IDS = {int(x) for x in os.environ.get("TEAM_USER_IDS", "").split(",") if x.strip()}
+
+# Offline auto-reply templates — one is picked per chat, never the same one twice in a row.
+# Placeholders: {when} = "today at 10:00 UK time" / "tomorrow (Saturday) at 10:00 UK time" / "on Monday at 10:00 UK time"
+#               {note} = Saturday short-window / Sunday day-off notice (empty on weekdays)
+OFFLINE_MESSAGES = [
+    (
+        "Hi! Our team is offline right now and will be back {when}.\n\n"
+        "Your message has been marked as high priority — we'll reply to you first thing when we're back.\n\n"
+        "{note}\n\n"
+        "If it's urgent, please describe the issue in detail now so we can start on it right away."
+    ),
+    (
+        "Thanks for your message! We're currently offline — the team returns {when}.\n\n"
+        "Your request is already in the high-priority queue, so you'll hear from us first.\n\n"
+        "{note}\n\n"
+        "Feel free to send any details or screenshots in the meantime — it'll speed things up."
+    ),
+    (
+        "Hey! You've reached us outside working hours (Mon–Fri 10:00–18:00 UK time). We'll be back {when}.\n\n"
+        "Don't worry — your message is flagged as high priority and will be among the first we handle.\n\n"
+        "{note}\n\n"
+        "If something's blocked or stuck, drop the details here now and we'll jump on it as soon as we're online."
+    ),
+]
 
 # Referral reminder — runs every 3 weeks at REFERRAL_HOUR UK time
 REFERRAL_HOUR = 12  # noon

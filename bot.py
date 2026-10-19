@@ -1,7 +1,8 @@
 import logging
+import random
 import re
 import os
-from datetime import datetime, timedelta, time
+from datetime import datetime, time
 from zoneinfo import ZoneInfo
 
 import redis
@@ -11,9 +12,10 @@ from telegram.ext import Application, MessageHandler, CommandHandler, filters, C
 
 from config import (
     BOT_TOKEN, SOURCE_CHANNEL_ID, SOURCE_PATTERNS,
-    CHANNEL_LINK, CHANNEL_BUTTON_TEXT, OFFLINE_MESSAGE, UK_TZ,
+    CHANNEL_LINK, CHANNEL_BUTTON_TEXT, OFFLINE_MESSAGES, TEAM_USER_IDS, UK_TZ,
     REFERRAL_MESSAGE, REFERRAL_HOUR, REFERRAL_INTERVAL_DAYS,
 )
+from schedule import is_online, offline_period_key, render
 
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
@@ -24,6 +26,7 @@ _redis = redis.from_url(os.environ["REDIS_URL"], decode_responses=True)
 
 CHATS_KEY = "bot:chats"
 AUTOREPLY_PREFIX = "bot:autoreply:"
+AUTOREPLY_LAST_TPL_PREFIX = "bot:autoreply:last_tpl:"
 REFERRAL_LAST_SENT_KEY = "bot:referral:last_sent"
 
 
@@ -44,27 +47,26 @@ def save_chats(chats: set):
 
 # ---------- auto-reply tracking ----------
 
-def night_period_key() -> str:
-    now = datetime.now(ZoneInfo(UK_TZ))
-    if now.hour < 10:
-        return str((now - timedelta(days=1)).date())
-    return str(now.date())
-
-
 def already_replied(chat_id: int) -> bool:
-    key = AUTOREPLY_PREFIX + night_period_key()
+    key = AUTOREPLY_PREFIX + offline_period_key()
     return _redis.sismember(key, str(chat_id))
 
 
 def mark_replied(chat_id: int):
-    key = AUTOREPLY_PREFIX + night_period_key()
+    key = AUTOREPLY_PREFIX + offline_period_key()
     _redis.sadd(key, str(chat_id))
-    _redis.expire(key, 60 * 60 * 48)
+    _redis.expire(key, 60 * 60 * 24 * 4)  # longest offline period is Sat 11:00 → Mon 10:00
 
 
-def is_offline_hours() -> bool:
-    hour = datetime.now(ZoneInfo(UK_TZ)).hour
-    return hour >= 18 or hour < 10
+def pick_offline_message(chat_id: int) -> str:
+    """Rotate templates per chat: never the same one twice in a row."""
+    last = _redis.get(AUTOREPLY_LAST_TPL_PREFIX + str(chat_id))
+    choices = list(range(len(OFFLINE_MESSAGES)))
+    if last is not None and len(choices) > 1:
+        choices = [i for i in choices if i != int(last)]
+    idx = random.choice(choices)
+    _redis.set(AUTOREPLY_LAST_TPL_PREFIX + str(chat_id), idx, ex=60 * 60 * 24 * 30)
+    return render(OFFLINE_MESSAGES[idx])
 
 
 # ---------- handlers ----------
@@ -122,18 +124,19 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not msg or not update.effective_chat:
         return
 
-    # Ignore messages from the bot itself
-    if update.effective_user and update.effective_user.id == context.bot.id:
+    # Ignore messages from the bot itself and from the team
+    user = update.effective_user
+    if user and (user.id == context.bot.id or user.id in TEAM_USER_IDS):
         return
 
-    if not is_offline_hours():
+    if is_online():
         return
 
     chat_id = update.effective_chat.id
     if already_replied(chat_id):
         return
 
-    await msg.reply_text(OFFLINE_MESSAGE)
+    await msg.reply_text(pick_offline_message(chat_id))
     mark_replied(chat_id)
     logging.info(f"Sent offline auto-reply to chat {chat_id}")
 
