@@ -1,33 +1,29 @@
 import logging
 import random
 import re
-import os
-from datetime import datetime, time
-from zoneinfo import ZoneInfo
-
-import redis
-
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, MessageHandler, CommandHandler, filters, ContextTypes
 
 from config import (
     BOT_TOKEN, SOURCE_CHANNEL_ID, SOURCE_PATTERNS,
-    CHANNEL_LINK, CHANNEL_BUTTON_TEXT, OFFLINE_MESSAGES, TEAM_USER_IDS, UK_TZ,
-    REFERRAL_MESSAGE, REFERRAL_HOUR, REFERRAL_INTERVAL_DAYS,
+    CHANNEL_LINK, CHANNEL_BUTTON_TEXT, OFFLINE_MESSAGES, TEAM_USER_IDS,
 )
 from schedule import is_online, offline_period_key, render
+import admin
+import store
 
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
     level=logging.INFO,
 )
+# httpx logs every request URL at INFO, and Telegram URLs contain the bot token.
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
-_redis = redis.from_url(os.environ["REDIS_URL"], decode_responses=True)
+_redis = store.r
 
-CHATS_KEY = "bot:chats"
+CHATS_KEY = store.CHATS_KEY
 AUTOREPLY_PREFIX = "bot:autoreply:"
 AUTOREPLY_LAST_TPL_PREFIX = "bot:autoreply:last_tpl:"
-REFERRAL_LAST_SENT_KEY = "bot:referral:last_sent"
 
 
 # ---------- chats storage ----------
@@ -87,6 +83,13 @@ def strip_source(text: str | None) -> str | None:
 async def on_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
     post = update.channel_post
     if not post or post.chat.id != SOURCE_CHANNEL_ID:
+        return
+
+    if store.is_own_channel_post(post.message_id):
+        return  # posted by the bot itself via a custom broadcast — already sent to chats
+
+    if not store.relay_enabled():
+        logging.info("Channel relay is disabled — post not broadcast.")
         return
 
     chats = load_chats()
@@ -150,24 +153,6 @@ async def on_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logging.info(f"Added to chat {update.message.chat.id} ({update.message.chat.title})")
 
 
-async def send_referral_reminder(context: ContextTypes.DEFAULT_TYPE):
-    last_sent_str = _redis.get(REFERRAL_LAST_SENT_KEY)
-    if last_sent_str:
-        days_since = (datetime.now(ZoneInfo(UK_TZ)).date() - datetime.fromisoformat(last_sent_str).date()).days
-        if days_since < REFERRAL_INTERVAL_DAYS:
-            return
-
-    chats = load_chats()
-    for chat_id in chats:
-        try:
-            await context.bot.send_message(chat_id, REFERRAL_MESSAGE)
-            logging.info(f"Sent referral reminder to chat {chat_id}")
-        except Exception as e:
-            logging.error(f"Failed to send referral reminder to {chat_id}: {e}")
-
-    _redis.set(REFERRAL_LAST_SENT_KEY, str(datetime.now(ZoneInfo(UK_TZ)).date()))
-
-
 async def on_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
     _redis.sadd(CHATS_KEY, chat.id)
@@ -183,11 +168,8 @@ def main():
     # Catch all incoming messages for offline auto-reply
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, on_message))
 
-    # Referral reminder — fires daily at noon UK time, but sends only every 21 days (tracked in Redis)
-    app.job_queue.run_daily(
-        send_referral_reminder,
-        time=time(hour=REFERRAL_HOUR, minute=0, second=0, tzinfo=ZoneInfo(UK_TZ)),
-    )
+    # Owner-only admin panel (runs before the handlers above) + referral reminder job
+    admin.register(app)
 
     logging.info("Bot started.")
     app.run_polling()

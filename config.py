@@ -10,7 +10,23 @@ UK_TZ = "Europe/London"
 
 # Telegram user IDs of the team — their messages never trigger the offline auto-reply.
 # Set TEAM_USER_IDS="123,456" in Railway env.
-TEAM_USER_IDS = {int(x) for x in os.environ.get("TEAM_USER_IDS", "").split(",") if x.strip()}
+_ENV_TEAM_USER_IDS = {int(x) for x in os.environ.get("TEAM_USER_IDS", "").split(",") if x.strip()}
+
+# The team. They are the ONLY Telegram users allowed to use the admin panel (fixed in code
+# on purpose, so access can't be widened by an env change), and they never get auto-replies.
+ADMIN_USER_IDS = frozenset({
+    7678690499,  # Godfrey
+    7599307546,  # Nick
+    8422635747,  # Enzo
+    8313250405,  # Lorenzo
+})
+
+# Auto-reply ignores the team above plus anyone still listed in TEAM_USER_IDS env.
+TEAM_USER_IDS = _ENV_TEAM_USER_IDS | ADMIN_USER_IDS
+
+# HTTPS URL of the mini app page (docs/index.html, e.g. served by GitHub Pages).
+# Optional: without it the panel still works via inline buttons in the bot DM.
+WEBAPP_URL = os.environ.get("WEBAPP_URL", "").strip() or None
 
 # Offline auto-reply templates — one is picked per chat, never the same one twice in a row.
 # Placeholders: {when} = "today at 10:00 UK time" / "tomorrow (Saturday) at 10:00 UK time" / "on Monday at 10:00 UK time"

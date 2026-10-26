@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Панель бота</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root {
+    --bg: var(--tg-theme-bg-color, #fff);
+    --bg2: var(--tg-theme-secondary-bg-color, #f2f2f7);
+    --text: var(--tg-theme-text-color, #000);
+    --hint: var(--tg-theme-hint-color, #8e8e93);
+    --accent: var(--tg-theme-button-color, #2481cc);
+    --accent-text: var(--tg-theme-button-text-color, #fff);
+    --danger: var(--tg-theme-destructive-text-color, #e53935);
+    --sep: color-mix(in srgb, var(--hint) 25%, transparent);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 12px 16px 24px; background: var(--bg2); color: var(--text);
+    font: 15px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  h2 { font-size: 13px; font-weight: 500; text-transform: uppercase; letter-spacing: .03em;
+       color: var(--hint); margin: 20px 4px 6px; }
+  .card { background: var(--bg); border-radius: 12px; overflow: hidden; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+         padding: 12px 14px; min-height: 48px; }
+  .row + .row { border-top: 1px solid var(--sep); }
+  .row .sub { color: var(--hint); font-size: 13px; }
+  .status { font-weight: 600; }
+  .on { color: #34c759; } .off { color: var(--danger); }
+  /* switch */
+  .sw { position: relative; width: 51px; height: 31px; flex: none; }
+  .sw input { opacity: 0; width: 0; height: 0; }
+  .sw span { position: absolute; inset: 0; background: var(--sep); border-radius: 31px; transition: .2s; }
+  .sw span::before { content: ""; position: absolute; width: 27px; height: 27px; left: 2px; top: 2px;
+                     background: #fff; border-radius: 50%; transition: .2s; box-shadow: 0 1px 3px rgba(0,0,0,.25); }
+  .sw input:checked + span { background: #34c759; }
+  .sw input:checked + span::before { transform: translateX(20px); }
+  input[type=number] { width: 72px; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--sep);
+                       background: var(--bg2); color: var(--text); font: inherit; text-align: right; }
+  button.act { width: 100%; text-align: left; background: none; border: 0; color: var(--accent);
+               font: inherit; padding: 13px 14px; cursor: pointer; }
+  button.act + button.act { border-top: 1px solid var(--sep); }
+  button.act.danger { color: var(--danger); }
+  .note { color: var(--hint); font-size: 13px; margin: 6px 4px 0; }
+  .err { color: var(--danger); }
+  #save { margin-top: 20px; width: 100%; padding: 13px; border: 0; border-radius: 12px;
+          background: var(--accent); color: var(--accent-text); font: inherit; font-weight: 600; }
+</style>
+</head>
+<body>
+
+<h2>Рассылка из канала</h2>
+<div class="card">
+  <div class="row">
+    <div>Статус: <span id="relayStatus" class="status"></span>
+      <div class="sub">Посты из канала уходят во все чаты</div></div>
+    <label class="sw"><input type="checkbox" id="relay"><span></span></label>
+  </div>
+</div>
+
+<h2>Реферальное напоминание</h2>
+<div class="card">
+  <div class="row">
+    <div>Статус: <span id="refStatus" class="status"></span></div>
+    <label class="sw"><input type="checkbox" id="ref"><span></span></label>
+  </div>
+  <div class="row"><div>Каждые, дней</div><input type="number" id="int" min="1" max="90" inputmode="numeric"></div>
+  <div class="row"><div>Час отправки (UK)</div><input type="number" id="hour" min="0" max="23" inputmode="numeric"></div>
+  <div class="row"><div>Последнее</div><div class="sub" id="last"></div></div>
+  <div class="row"><div>Следующее</div><div class="sub" id="next"></div></div>
+  <div class="row"><div>Текст</div><div class="sub" id="custom"></div></div>
+</div>
+<div class="card" style="margin-top:8px">
+  <button class="act" data-action="edit_text">✏️ Изменить текст</button>
+  <button class="act" data-action="preview">👁 Превью в чат</button>
+  <button class="act" data-action="reset_text" id="resetBtn">↩️ Вернуть текст по умолчанию</button>
+  <button class="act" data-action="send_now">🚀 Отправить сейчас всем…</button>
+</div>
+
+<h2>Своя рассылка</h2>
+<div class="card">
+  <button class="act" data-action="broadcast">📣 Создать рассылку</button>
+</div>
+<p class="note">Чатов в рассылке: <b id="chats"></b>. Кнопки-действия закрывают панель и продолжаются в чате с ботом.</p>
+
+<button id="save">Сохранить</button>
+<p class="note err" id="error" hidden></p>
+
+<script>
+  const tg = window.Telegram && window.Telegram.WebApp;
+  if (tg) { tg.ready(); tg.expand(); }
+
+  const q = new URLSearchParams(location.search);
+  const $ = id => document.getElementById(id);
+  const intOr = (v, d) => { const n = parseInt(v, 10); return Number.isFinite(n) ? n : d; };
+
+  $("relay").checked = q.get("relay") === "1";
+  $("ref").checked = q.get("ref") === "1";
+  $("int").value = intOr(q.get("int"), 21);
+  $("hour").value = intOr(q.get("hour"), 12);
+  $("last").textContent = q.get("last") || "ещё не было";
+  $("chats").textContent = q.get("chats") || "—";
+  const isCustom = q.get("custom") === "1";
+  $("custom").textContent = isCustom ? "свой" : "по умолчанию";
+  if (!isCustom) $("resetBtn").hidden = true;
+
+  function paint() {
+    for (const [box, label] of [["relay", "relayStatus"], ["ref", "refStatus"]]) {
+      const on = $(box).checked;
+      $(label).textContent = on ? "включена" : "выключена";
+      $(label).className = "status " + (on ? "on" : "off");
+    }
+    $("refStatus").textContent = $("ref").checked ? "включено" : "выключено";
+    $("next").textContent = $("ref").checked ? (q.get("next") || "—") : "—";
+  }
+  $("relay").onchange = $("ref").onchange = paint;
+  paint();
+
+  function send(payload) {
+    if (!tg || !tg.sendData) { showError("Открой панель из Telegram (кнопка «⚙️ Панель» в чате с ботом)."); return; }
+    tg.sendData(JSON.stringify(payload)); // closes the mini app
+  }
+  function showError(t) { $("error").textContent = t; $("error").hidden = false; }
+
+  $("save").onclick = () => {
+    const interval = Number($("int").value), hour = Number($("hour").value);
+    if (!Number.isInteger(interval) || interval < 1 || interval > 90) return showError("Интервал: целое число от 1 до 90.");
+    if (!Number.isInteger(hour) || hour < 0 || hour > 23) return showError("Час: целое число от 0 до 23.");
+    send({ action: "save", relay: $("relay").checked, referral: $("ref").checked, interval, hour });
+  };
+  document.querySelectorAll("button[data-action]").forEach(b =>
+    b.onclick = () => send({ action: b.dataset.action }));
+</script>
+</body>
+</html>
